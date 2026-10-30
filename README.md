@@ -15,7 +15,7 @@ Phase 0/1 prototype for [jerryleooo/business#97](https://github.com/jerryleooo/b
   `generationType` (human, ai_extracted, ai_generated, ai_transformed, import, external_source), capability / model / trace,
   and approval separately. Accepting AI content never turns it into human content; a human rewriting AI text makes it
   `mixed`. Every node keeps a revision chain recording who changed what. UI marks: `✦` AI, `✦·` mixed.
-- **Multi-document merge.** New nodes similar to existing ones (Claude's judgement plus a lexical matcher that handles
+- **Multi-document merge.** New nodes similar to existing ones (the capability's judgement plus a lexical matcher that handles
   Chinese) show up as "Possible merge" — Merge re-points the new node's edges onto the existing node.
 - **Frontier home.** "Continue exploring" card (last explored, why it stopped, next step), other frontiers grouped by
   domain with filter/sort, and a zoomed-out list of explorations.
@@ -29,12 +29,18 @@ Phase 0/1 prototype for [jerryleooo/business#97](https://github.com/jerryleooo/b
 
 | Extractor | When | Authorship |
 | --- | --- | --- |
-| `extract-exploration-graph` (Claude, `src/import/claudeExtractor.ts`) | `ANTHROPIC_API_KEY` is set | AI, per-node `generationType` |
-| `structural-import` (`src/import/heuristicExtractor.ts`) | no key, or toggled off | human (`import`) — picks up `Q:` / `Hypothesis:` / `Evidence:` / `Conclusion:` / `Next:` lines (also `问题：` `假设：` `结论：` `下一步：` …) and questions, nested by headings and indentation |
+| `extract-exploration-graph` via agentaab (`src/import/agentaabExtractor.ts`) | `AGENTAAB_BUSINESS_SLUG` + `AGENTAAB_RUNTIME_TOKEN` are set | AI, per-node `generationType` |
+| `structural-import` (`src/import/heuristicExtractor.ts`) | agentaab not configured, or toggled off | human (`import`) — picks up `Q:` / `Hypothesis:` / `Evidence:` / `Conclusion:` / `Next:` lines (also `问题：` `假设：` `结论：` `下一步：` …) and questions, nested by headings and indentation |
 
-Both implement the `GraphExtractor` port, so an agentaab-served capability can replace the direct Claude call later.
-The Claude extractor uses `claude-opus-5-5` (override with `EXTRACTION_MODEL`), structured outputs, and server-side
-refusal fallbacks (`fallbacks: "default"`); the model that actually answered is recorded in provenance.
+AI runs only through [agentaab](../agentaab): Explorer holds no model-provider SDK or key. Model choice, provider
+credentials, cost accounting, quotas and run traces live in the agentaab Agent Business; Explorer calls its runtime
+(`GET /app/{slug}/runtime-config`, then `POST` the published completion endpoint with an app-scoped `pk_app_` / `eu_rt_`
+token) and validates the structured result against the contract. The invocation id and reported model are stored in
+each node's provenance.
+
+The capability's instructions, user template and input/output schemas live in `src/import/extractionContract.ts`;
+`capability/extract-exploration-graph.json` is the generated Single Agent definition to publish in agentaab
+(regenerate with `UPDATE_CAPABILITY=1 pnpm test`; a test keeps the two in sync). Pick the model in agentaab.
 
 ## Architecture
 
@@ -42,7 +48,8 @@ refusal fallbacks (`fallbacks: "default"`); the model that actually answered is 
 web/            React + React Flow UI (desktop-first)
 worker/         Cloudflare Worker (Hono) — the only code that sees Workers/D1 bindings
 src/domain/     types, GraphRepository port, pure graph/frontier logic
-src/import/     extraction port, Claude + structural extractors, sanitising, merge matching
+src/import/     extraction port + contract, agentaab and structural extractors, sanitising, merge matching
+capability/     generated agentaab Single Agent definition for extract-exploration-graph
 src/storage/    SqlGraphRepository over a tiny SqlDatabase port + D1 adapter
 migrations/     plain SQLite-subset schema (D1 now, local SQLite for a future Tauri app)
 ```
@@ -59,14 +66,22 @@ pnpm test
 pnpm typecheck
 ```
 
-To enable AI extraction locally, put `ANTHROPIC_API_KEY=...` in `.dev.vars` (git-ignored).
+To enable AI extraction locally, put the agentaab runtime settings in `.dev.vars` (git-ignored):
+
+```
+AGENTAAB_API_URL=https://api.agentaab.com/api
+AGENTAAB_BUSINESS_SLUG=<business serving extract-exploration-graph>
+AGENTAAB_RUNTIME_TOKEN=<eu_rt_… or pk_app_… — never a creator token or provider key>
+AGENTAAB_GUEST_ID=<anon:… , only with a pk_app_ token>
+```
 
 ## Deploy (Cloudflare Workers + Static Assets + D1)
 
 ```bash
 wrangler d1 create explorer          # copy the id into wrangler.jsonc
 pnpm db:migrate:remote
-wrangler secret put ANTHROPIC_API_KEY
+wrangler secret put AGENTAAB_BUSINESS_SLUG
+wrangler secret put AGENTAAB_RUNTIME_TOKEN
 pnpm deploy
 ```
 

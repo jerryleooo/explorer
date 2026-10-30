@@ -101,10 +101,10 @@ export function ImportPanel({ domains }: { domains: string[] }) {
         {aiExtraction ? (
           <label className="switch small">
             <input type="checkbox" checked={useAi} onChange={(e) => setUseAi(e.target.checked)} />
-            <span>AI extraction (Claude)</span>
+            <span>AI extraction (agentaab)</span>
           </label>
         ) : (
-          <span className="muted small" title="Set ANTHROPIC_API_KEY on the Worker to enable AI extraction">
+          <span className="muted small" title="Set AGENTAAB_BUSINESS_SLUG and AGENTAAB_RUNTIME_TOKEN on the Worker to enable AI extraction">
             Structural import · AI extraction not configured
           </span>
         )}

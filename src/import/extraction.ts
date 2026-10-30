@@ -18,7 +18,7 @@ export interface ExtractionInput {
   domainHint: string;
 }
 
-/** Port for whatever turns a document into a proposed exploration graph (Claude, agentaab capability, heuristics, ...). */
+/** Port for whatever turns a document into a proposed exploration graph (the agentaab capability, heuristics, ...). */
 export interface GraphExtractor {
   readonly info: ExtractorInfo;
   extract(input: ExtractionInput): Promise<Extraction>;

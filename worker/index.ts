@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { NotFoundError, ValidationError, type GraphRepository } from "../src/domain/repository";
-import { ClaudeGraphExtractor } from "../src/import/claudeExtractor";
+import { AgentaabError, AgentaabGraphExtractor, agentaabConfigFrom } from "../src/import/agentaabExtractor";
 import type { GraphExtractor } from "../src/import/extraction";
 import { HeuristicExtractor } from "../src/import/heuristicExtractor";
 import { importSource } from "../src/import/importSource";
@@ -18,8 +18,13 @@ import {
   parseTitle,
 } from "./validation";
 
-/** Secrets are not part of the generated Env: set with `wrangler secret put` or .dev.vars. */
-type Bindings = Env & { ANTHROPIC_API_KEY?: string; EXTRACTION_MODEL?: string };
+/** agentaab settings are not part of the generated Env: set with `wrangler secret put` or .dev.vars. */
+type Bindings = Env & {
+  AGENTAAB_API_URL?: string;
+  AGENTAAB_BUSINESS_SLUG?: string;
+  AGENTAAB_RUNTIME_TOKEN?: string;
+  AGENTAAB_GUEST_ID?: string;
+};
 type AppEnv = { Bindings: Bindings; Variables: { repo: GraphRepository } };
 
 const app = new Hono<AppEnv>().basePath("/api");
@@ -32,20 +37,23 @@ app.use(async (c, next) => {
 
 app.onError((err, c) => {
   if (err instanceof ValidationError) return c.json({ error: err.message }, 400);
+  if (err instanceof AgentaabError) return c.json({ error: err.message, code: err.code }, err.status >= 500 ? 502 : 422);
   if (err instanceof NotFoundError) return c.json({ error: err.message }, 404);
   console.error(err);
   return c.json({ error: err instanceof Error ? err.message : "internal error" }, 500);
 });
 
+/** AI runs through the agentaab capability; without it, the no-AI structural importer is used. */
 function extractorFor(env: Bindings, requested: "ai" | "structural" | undefined): GraphExtractor {
-  if (requested === "structural" || !env.ANTHROPIC_API_KEY) {
-    if (requested === "ai") throw new ValidationError("AI extraction is not configured (ANTHROPIC_API_KEY is missing)");
+  const agentaab = agentaabConfigFrom(env);
+  if (requested === "structural" || !agentaab) {
+    if (requested === "ai") throw new ValidationError("AI extraction is not configured (set AGENTAAB_BUSINESS_SLUG and AGENTAAB_RUNTIME_TOKEN)");
     return new HeuristicExtractor();
   }
-  return new ClaudeGraphExtractor(env.ANTHROPIC_API_KEY, env.EXTRACTION_MODEL || undefined);
+  return new AgentaabGraphExtractor(agentaab);
 }
 
-app.get("/capabilities", (c) => c.json({ aiExtraction: Boolean(c.env.ANTHROPIC_API_KEY) }));
+app.get("/capabilities", (c) => c.json({ aiExtraction: agentaabConfigFrom(c.env) !== null }));
 
 app.get("/graph", async (c) => c.json(await c.var.repo.getGraph()));
 
