@@ -1,3 +1,4 @@
+import { positionNear } from "../domain/graph";
 import { NotFoundError, ValidationError, type GraphRepository, type NewProposal } from "../domain/repository";
 import {
   authorshipOf,
@@ -53,6 +54,9 @@ interface NodeRow extends AttributionRow {
   confidence: number | null;
   domain: string;
   source_refs: string;
+  x: number | null;
+  y: number | null;
+  pinned: number;
   created_at: string;
   updated_at: string;
   f_node_id: string | null;
@@ -177,6 +181,17 @@ export class SqlGraphRepository implements GraphRepository {
     const ts = this.timestamp();
     const session = await this.getActiveSession();
     const proposalId = parent?.proposalId ?? null;
+    let x = input.x ?? null;
+    let y = input.y ?? null;
+    if (x == null && y == null && parent && parent.x != null && parent.y != null) {
+      const siblings = await this.db.all<{ x: number | null; y: number | null }>(
+        `SELECT x, y FROM nodes WHERE workspace_id = ? AND (proposal_id IS NULL OR proposal_id = ?)`,
+        [this.ws, proposalId ?? ""],
+      );
+      const placed = positionNear({ x: parent.x, y: parent.y }, siblings);
+      x = placed.x;
+      y = placed.y;
+    }
     const node: ExplorationNode = {
       id: this.newId(),
       proposalId,
@@ -188,6 +203,9 @@ export class SqlGraphRepository implements GraphRepository {
       confidence: null,
       domain: input.domain?.trim() || parent?.domain || "",
       sourceRefs: [],
+      x,
+      y,
+      pinned: input.pinned ?? false,
       createdAt: ts,
       updatedAt: ts,
       frontier: null,
@@ -228,7 +246,7 @@ export class SqlGraphRepository implements GraphRepository {
     const statements: SqlStatement[] = [
       {
         sql: `UPDATE nodes SET type = ?, title = ?, body = ?, status = ?, stop_note = ?, confidence = ?, domain = ?,
-              source_refs = ?, authorship = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
+              source_refs = ?, x = ?, y = ?, pinned = ?, authorship = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`,
         params: [
           after.type,
           after.title,
@@ -238,6 +256,9 @@ export class SqlGraphRepository implements GraphRepository {
           after.confidence,
           after.domain,
           JSON.stringify(after.sourceRefs),
+          after.x,
+          after.y,
+          after.pinned ? 1 : 0,
           after.authorship,
           ts,
           id,
@@ -454,9 +475,26 @@ export class SqlGraphRepository implements GraphRepository {
       },
     ];
 
+    const attachParent = input.attachTo ? await this.requireNode(input.attachTo.nodeId) : null;
+    const occupied: Array<{ x: number | null; y: number | null }> =
+      attachParent && attachParent.x != null && attachParent.y != null
+        ? await this.db.all<{ x: number | null; y: number | null }>(
+            `SELECT x, y FROM nodes WHERE workspace_id = ? AND proposal_id IS NULL`,
+            [this.ws],
+          )
+        : [];
+
     for (const extracted of extraction.nodes) {
       const authorship = authorshipOf(extracted.generationType);
       const actor: ActorType = authorship === "ai" ? "ai" : "human";
+      let x: number | null = null;
+      let y: number | null = null;
+      if (attachParent && attachParent.x != null && attachParent.y != null) {
+        const placed = positionNear({ x: attachParent.x, y: attachParent.y }, occupied);
+        x = placed.x;
+        y = placed.y;
+        occupied.push(placed);
+      }
       const node: ExplorationNode = {
         id: ids.get(extracted.key)!,
         proposalId,
@@ -468,6 +506,9 @@ export class SqlGraphRepository implements GraphRepository {
         confidence: extracted.confidence,
         domain: input.domain,
         sourceRefs: [sourceId],
+        x,
+        y,
+        pinned: false,
         createdAt: ts,
         updatedAt: ts,
         frontier: extracted.frontier && {
@@ -503,6 +544,27 @@ export class SqlGraphRepository implements GraphRepository {
       };
       statements.push(...this.insertEdge(edge, edge.authorship === "ai" ? "ai" : "human", session, ts));
     }
+
+    if (attachParent && input.attachTo) {
+      const hasIncoming = new Set(extraction.edges.map((e) => e.targetKey));
+      const rootKeys = extraction.nodes.map((n) => n.key).filter((k) => !hasIncoming.has(k));
+      for (const key of rootKeys) {
+        const extracted = extraction.nodes.find((n) => n.key === key)!;
+        const edge: ExplorationEdge = {
+          id: this.newId(),
+          proposalId,
+          sourceId: attachParent.id,
+          targetId: ids.get(key)!,
+          type: input.attachTo.edgeType,
+          createdAt: ts,
+          authorship: authorshipOf(extracted.generationType),
+          provenance: baseProvenance(extracted.generationType),
+          approvedByHuman: false,
+          approvedAt: null,
+        };
+        statements.push(...this.insertEdge(edge, edge.authorship === "ai" ? "ai" : "human", session, ts));
+      }
+    }
     statements.push(this.event(session, extraction.extractor.model ? "ai" : "human", "created", "proposal", proposalId, null, proposal, ts));
     await this.db.batch(statements);
     return proposal;
@@ -536,10 +598,55 @@ export class SqlGraphRepository implements GraphRepository {
     return rows.map(toProposal);
   }
 
-  async acceptProposal(id: string): Promise<Proposal> {
+  async acceptProposal(id: string, nodeIds?: string[]): Promise<Proposal> {
     const proposal = await this.requireOpenProposal(id);
     const ts = this.timestamp();
     const session = await this.getActiveSession();
+
+    if (nodeIds !== undefined) {
+      const requested = [...new Set(nodeIds)];
+      if (requested.length === 0) throw new ValidationError("select at least one node to accept");
+      const draftRows = await this.db.all<{ id: string }>(
+        `SELECT id FROM nodes WHERE proposal_id = ? AND workspace_id = ?`,
+        [id, this.ws],
+      );
+      const draftSet = new Set(draftRows.map((r) => r.id));
+      const accepting = requested.filter((nid) => draftSet.has(nid));
+      if (accepting.length === 0) throw new ValidationError("no matching draft nodes in proposal");
+
+      const acceptingSet = new Set(accepting);
+      const allAccepted = acceptingSet.size === draftSet.size;
+      const marks = accepting.map(() => "?").join(", ");
+      const remainingCandidates = proposal.mergeCandidates.filter((c) => !acceptingSet.has(c.proposedNodeId));
+      const nextProposal: Proposal = allAccepted
+        ? { ...proposal, status: "accepted", resolvedAt: ts, mergeCandidates: [] }
+        : { ...proposal, mergeCandidates: remainingCandidates };
+
+      const statements: SqlStatement[] = [
+        {
+          sql: `UPDATE frontiers SET approved_by_human = 1 WHERE node_id IN (${marks})`,
+          params: accepting,
+        },
+        {
+          sql: `UPDATE nodes SET proposal_id = NULL, approved_by_human = 1, approved_at = ? WHERE proposal_id = ? AND workspace_id = ? AND id IN (${marks})`,
+          params: [ts, id, this.ws, ...accepting],
+        },
+        {
+          sql: `UPDATE edges SET proposal_id = NULL, approved_by_human = 1, approved_at = ?
+                WHERE proposal_id = ? AND workspace_id = ?
+                  AND source_node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND proposal_id IS NULL)
+                  AND target_node_id IN (SELECT id FROM nodes WHERE workspace_id = ? AND proposal_id IS NULL)`,
+          params: [ts, id, this.ws, this.ws, this.ws],
+        },
+        allAccepted
+          ? { sql: `UPDATE proposals SET status = 'accepted', resolved_at = ?, merge_candidates = '[]' WHERE id = ?`, params: [ts, id] }
+          : { sql: `UPDATE proposals SET merge_candidates = ? WHERE id = ?`, params: [JSON.stringify(remainingCandidates), id] },
+        this.event(session, "human", allAccepted ? "accepted" : "updated", "proposal", id, proposal, nextProposal, ts),
+      ];
+      await this.db.batch(statements);
+      return nextProposal;
+    }
+
     const accepted: Proposal = { ...proposal, status: "accepted", resolvedAt: ts, mergeCandidates: [] };
     await this.db.batch([
       {
@@ -594,6 +701,11 @@ export class SqlGraphRepository implements GraphRepository {
     const row = await this.db.first<SourceRow>(`SELECT * FROM sources WHERE workspace_id = ? AND id = ?`, [this.ws, id]);
     if (!row) throw new NotFoundError(`source ${id} not found`);
     return toSource(row);
+  }
+
+  async listSources(): Promise<Source[]> {
+    const rows = await this.db.all<SourceRow>(`SELECT * FROM sources WHERE workspace_id = ? ORDER BY created_at DESC`, [this.ws]);
+    return rows.map(toSource);
   }
 
   async getActiveSession(): Promise<ExplorationSession | null> {
@@ -733,8 +845,8 @@ export class SqlGraphRepository implements GraphRepository {
     return [
       {
         sql: `INSERT INTO nodes (id, workspace_id, proposal_id, type, title, body, status, stop_note, confidence, domain, source_refs,
-                authorship, generation_type, provenance, approved_by_human, approved_at, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                x, y, pinned, authorship, generation_type, provenance, approved_by_human, approved_at, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params: [
           node.id,
           this.ws,
@@ -747,6 +859,9 @@ export class SqlGraphRepository implements GraphRepository {
           node.confidence,
           node.domain,
           JSON.stringify(node.sourceRefs),
+          node.x,
+          node.y,
+          node.pinned ? 1 : 0,
           node.authorship,
           node.provenance.generationType,
           JSON.stringify(node.provenance),
@@ -925,6 +1040,9 @@ function toNode(row: NodeRow): ExplorationNode {
     confidence: row.confidence,
     domain: row.domain,
     sourceRefs: JSON.parse(row.source_refs) as string[],
+    x: row.x,
+    y: row.y,
+    pinned: row.pinned === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     ...attribution(row),

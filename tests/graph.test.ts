@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ancestorPath, countDescendants, focusView } from "../src/domain/graph";
+import { ancestorPath, countDescendants, focusView, positionNear } from "../src/domain/graph";
 import { sortFrontiers, type FrontierNode } from "../src/domain/frontier";
 import type { Attribution, ExplorationEdge, ExplorationNode, Graph } from "../src/domain/types";
 
@@ -18,6 +18,9 @@ function node(id: string, extra: Partial<ExplorationNode> = {}): ExplorationNode
     confidence: null,
     domain: "",
     sourceRefs: [],
+    x: null,
+    y: null,
+    pinned: false,
     createdAt: "",
     updatedAt: "",
     frontier: null,
@@ -87,5 +90,15 @@ describe("sortFrontiers", () => {
   it("sorts by freshness and staleness", () => {
     expect(sortFrontiers(items, "freshness").map((n) => n.id)).toEqual(["blocked-high", "new-low", "old-high"]);
     expect(sortFrontiers(items, "stale")[0]?.id).toBe("old-high");
+  });
+});
+
+describe("positionNear", () => {
+  it("finds the nearest non-overlapping slot around an anchor", () => {
+    const first = positionNear({ x: 100, y: 100 }, [{ x: 100, y: 100 }]);
+    expect(first).toEqual({ x: 400, y: 100 });
+    const second = positionNear({ x: 100, y: 100 }, [{ x: 100, y: 100 }, first]);
+    expect(second).not.toEqual(first);
+    expect(Math.abs(second.x - first.x) >= 260 || Math.abs(second.y - first.y) >= 110).toBe(true);
   });
 });

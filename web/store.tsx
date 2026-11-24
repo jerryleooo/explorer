@@ -1,10 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import type { ExplorationSession, Graph, Proposal } from "../src/domain/types";
+import type { ExplorationSession, Graph, Proposal, Source } from "../src/domain/types";
 import { api } from "./api";
 
 interface Store {
   graph: Graph | null;
   proposals: Proposal[];
+  sources: Source[];
   aiExtraction: boolean;
   refresh: () => Promise<void>;
   session: ExplorationSession | null;
@@ -20,15 +21,17 @@ const StoreContext = createContext<Store | null>(null);
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [graph, setGraph] = useState<Graph | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [aiExtraction, setAiExtraction] = useState(false);
   const [session, setSession] = useState<ExplorationSession | null>(null);
   const [sessionChanges, setSessionChanges] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [g, s, p] = await Promise.all([api.graph(), api.activeSession(), api.proposals()]);
+    const [g, s, p, srcs] = await Promise.all([api.graph(), api.activeSession(), api.proposals(), api.sources()]);
     setGraph(g);
     setProposals(p);
+    setSources(srcs);
     setSession(s);
     setSessionChanges(s ? (await api.events({ sessionId: s.id })).length : 0);
   }, []);
@@ -53,8 +56,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ graph, proposals, aiExtraction, refresh, session, sessionChanges, notice, setNotice, mutate }),
-    [graph, proposals, aiExtraction, refresh, session, sessionChanges, notice, mutate],
+    () => ({ graph, proposals, sources, aiExtraction, refresh, session, sessionChanges, notice, setNotice, mutate }),
+    [graph, proposals, sources, aiExtraction, refresh, session, sessionChanges, notice, mutate],
   );
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

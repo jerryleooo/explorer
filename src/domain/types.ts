@@ -83,6 +83,11 @@ export interface ExplorationNode extends Attribution {
   /** Domain / project grouping (metadata, not a node). */
   domain: string;
   sourceRefs: string[];
+  /** Persisted spatial coordinates on the canvas; null until placed or dragged. */
+  x: number | null;
+  y: number | null;
+  /** When true, the node's position is locked on the canvas. */
+  pinned: boolean;
   createdAt: string;
   updatedAt: string;
   frontier: FrontierState | null;
@@ -200,11 +205,16 @@ export interface NewNode {
   title: string;
   body?: string;
   domain?: string;
+  x?: number | null;
+  y?: number | null;
+  pinned?: boolean;
   /** Optionally attach the new node beneath an existing one. */
   parent?: { nodeId: string; edgeType: EdgeType };
 }
 
-export type NodePatch = Partial<Pick<ExplorationNode, "type" | "title" | "body" | "status" | "stopNote" | "confidence" | "domain" | "sourceRefs">>;
+export type NodePatch = Partial<
+  Pick<ExplorationNode, "type" | "title" | "body" | "status" | "stopNote" | "confidence" | "domain" | "sourceRefs" | "x" | "y" | "pinned">
+>;
 
 export interface NewEdge {
   sourceId: string;

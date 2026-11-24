@@ -129,3 +129,25 @@ describe("sessions and provenance", () => {
     expect(exported.events).toHaveLength(2);
   });
 });
+
+describe("spatial layout and pin locks", () => {
+  it("persists node coordinates and pin state, and places new children near their parent", async () => {
+    const { node: parent } = await repo.createNode({ type: "question", title: "Root", x: 120, y: 80, pinned: true });
+    expect(parent).toMatchObject({ x: 120, y: 80, pinned: true });
+
+    const { node: child } = await repo.createNode({
+      type: "hypothesis",
+      title: "Child",
+      parent: { nodeId: parent.id, edgeType: "led_to" },
+    });
+    expect(child.x).not.toBeNull();
+    expect(child.y).not.toBeNull();
+    expect(child.pinned).toBe(false);
+
+    const moved = await repo.updateNode(child.id, { x: 440, y: 200, pinned: true });
+    expect(moved).toMatchObject({ x: 440, y: 200, pinned: true });
+    expect(await repo.getNode(child.id)).toMatchObject({ x: 440, y: 200, pinned: true });
+    // Position-only update does not create a redundant content revision.
+    expect(await repo.listRevisions(child.id)).toHaveLength(1);
+  });
+});
