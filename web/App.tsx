@@ -16,6 +16,9 @@ export function App() {
             <Link to="/" className="brand">
               <span className="brand-mark" aria-hidden>◇</span> Explorer
             </Link>
+            <Link to="/map" className="btn ghost small">
+              Map
+            </Link>
             <SearchBox />
             <div className="topbar-right">
               <SessionControl />
@@ -27,6 +30,8 @@ export function App() {
           <Notice />
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/map" element={<GraphPage />} />
+            <Route path="/map/:domain" element={<GraphPage />} />
             <Route path="/graph/:nodeId" element={<GraphPage />} />
             <Route path="/proposals/:proposalId" element={<ProposalPage />} />
             <Route path="/sources/:sourceId" element={<SourcePage />} />

@@ -113,3 +113,34 @@ export function countDescendants(graph: Graph, nodeId: string): number {
   }
   return seen.size;
 }
+
+/**
+ * Finds the nearest non-overlapping canvas coordinate around `anchor`,
+ * preferring positions to the right (matching LR flow) and nearby rows.
+ */
+export function positionNear(
+  anchor: { x: number; y: number },
+  existing: ReadonlyArray<{ x: number | null; y: number | null }>,
+): { x: number; y: number } {
+  const occupied = existing.filter((p): p is { x: number; y: number } => p.x != null && p.y != null);
+  const dirs: ReadonlyArray<[number, number]> = [
+    [1, 0],
+    [1, 1],
+    [1, -1],
+    [0, 1],
+    [0, -1],
+    [-1, 1],
+    [-1, 0],
+    [-1, -1],
+  ];
+  for (let r = 1; r < 18; r++) {
+    for (const [dx, dy] of dirs) {
+      const x = Math.round((anchor.x + dx * 300 * r) / 4) * 4;
+      const y = Math.round((anchor.y + dy * 140 * r) / 4) * 4;
+      if (!occupied.some((p) => Math.abs(p.x - x) < 260 && Math.abs(p.y - y) < 110)) {
+        return { x, y };
+      }
+    }
+  }
+  return { x: Math.round((anchor.x + 300) / 4) * 4, y: Math.round((anchor.y + 140) / 4) * 4 };
+}

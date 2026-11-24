@@ -1,13 +1,16 @@
 import { Hono } from "hono";
 import { NotFoundError, ValidationError, type GraphRepository } from "../src/domain/repository";
 import { AgentaabError, AgentaabGraphExtractor, agentaabConfigFrom } from "../src/import/agentaabExtractor";
+import { exploreNextLayer } from "../src/import/exploreNext";
 import type { GraphExtractor } from "../src/import/extraction";
 import { HeuristicExtractor } from "../src/import/heuristicExtractor";
 import { importSource } from "../src/import/importSource";
 import { D1SqlDatabase } from "../src/storage/d1";
 import { SqlGraphRepository } from "../src/storage/sqlGraphRepository";
 import {
+  parseAcceptProposal,
   parseEdgeType,
+  parseExplore,
   parseFrontier,
   parseImport,
   parseMergeDecision,
@@ -64,6 +67,12 @@ app.delete("/nodes/:id", async (c) => {
   return c.body(null, 204);
 });
 app.post("/nodes/:id/merge", async (c) => c.json(await c.var.repo.mergeNodes(c.req.param("id"), parseMergeInto(await c.req.json()))));
+app.post("/nodes/:id/explore", async (c) => {
+  const { useAi } = parseExplore(await c.req.json().catch(() => undefined));
+  const agentaab = agentaabConfigFrom(c.env);
+  const extractor = useAi && agentaab ? new AgentaabGraphExtractor(agentaab) : null;
+  return c.json(await exploreNextLayer(c.var.repo, c.req.param("id"), extractor), 201);
+});
 app.get("/nodes/:id/revisions", async (c) => c.json(await c.var.repo.listRevisions(c.req.param("id"))));
 
 app.put("/nodes/:id/frontier", async (c) => c.json(await c.var.repo.setFrontier(c.req.param("id"), parseFrontier(await c.req.json()))));
@@ -82,12 +91,16 @@ app.post("/imports", async (c) => {
 });
 app.get("/proposals", async (c) => c.json(await c.var.repo.listProposals()));
 app.get("/proposals/:id", async (c) => c.json(await c.var.repo.getProposal(c.req.param("id"))));
-app.post("/proposals/:id/accept", async (c) => c.json(await c.var.repo.acceptProposal(c.req.param("id"))));
+app.post("/proposals/:id/accept", async (c) => {
+  const nodeIds = parseAcceptProposal(await c.req.json().catch(() => undefined));
+  return c.json(await c.var.repo.acceptProposal(c.req.param("id"), nodeIds));
+});
 app.post("/proposals/:id/discard", async (c) => c.json(await c.var.repo.discardProposal(c.req.param("id"))));
 app.post("/proposals/:id/merge-candidates", async (c) => {
   const { proposedNodeId, existingNodeId, decision } = parseMergeDecision(await c.req.json());
   return c.json(await c.var.repo.resolveMergeCandidate(c.req.param("id"), proposedNodeId, existingNodeId, decision));
 });
+app.get("/sources", async (c) => c.json(await c.var.repo.listSources()));
 app.get("/sources/:id", async (c) => c.json(await c.var.repo.getSource(c.req.param("id"))));
 
 app.get("/sessions/active", async (c) => c.json(await c.var.repo.getActiveSession()));

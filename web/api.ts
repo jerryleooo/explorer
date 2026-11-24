@@ -40,16 +40,19 @@ export const api = {
   updateEdge: (id: string, type: EdgeType) => request<ExplorationEdge>("PATCH", `/edges/${id}`, { type }),
   deleteEdge: (id: string) => request<void>("DELETE", `/edges/${id}`),
   mergeNode: (id: string, intoId: string) => request<ExplorationNode>("POST", `/nodes/${id}/merge`, { intoId }),
+  exploreNext: (id: string, useAi = false) => request<Proposal>("POST", `/nodes/${id}/explore`, { useAi }),
   revisions: (id: string) => request<NodeRevision[]>("GET", `/nodes/${id}/revisions`),
   capabilities: () => request<{ aiExtraction: boolean }>("GET", "/capabilities"),
   importSource: (input: { kind: SourceKind; name: string; content: string; domain?: string; extractor?: "ai" | "structural" }) =>
     request<Proposal>("POST", "/imports", input),
   proposals: () => request<Proposal[]>("GET", "/proposals"),
   proposal: (id: string) => request<ProposalView>("GET", `/proposals/${id}`),
-  acceptProposal: (id: string) => request<Proposal>("POST", `/proposals/${id}/accept`),
+  acceptProposal: (id: string, nodeIds?: string[]) =>
+    request<Proposal>("POST", `/proposals/${id}/accept`, nodeIds ? { nodeIds } : undefined),
   discardProposal: (id: string) => request<Proposal>("POST", `/proposals/${id}/discard`),
   resolveMerge: (id: string, proposedNodeId: string, existingNodeId: string, decision: "merge" | "keep") =>
     request<ProposalView>("POST", `/proposals/${id}/merge-candidates`, { proposedNodeId, existingNodeId, decision }),
+  sources: () => request<Source[]>("GET", "/sources"),
   source: (id: string) => request<Source>("GET", `/sources/${id}`),
   activeSession: () => request<ExplorationSession | null>("GET", "/sessions/active"),
   startSession: (title: string) => request<ExplorationSession>("POST", "/sessions", { title }),

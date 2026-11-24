@@ -33,10 +33,13 @@ interface NodeInspectorProps {
   graph: Graph;
   mutate: Mutate;
   onSelectNode: (id: string) => void;
+  onCenterNode?: (id: string) => void;
+  onAcceptNode?: (id: string) => void;
+  onExploreNext?: (id: string) => void;
   onDeleted: () => void;
 }
 
-export function NodeInspector({ node, graph, mutate, onSelectNode, onDeleted }: NodeInspectorProps) {
+export function NodeInspector({ node, graph, mutate, onSelectNode, onCenterNode, onAcceptNode, onExploreNext, onDeleted }: NodeInspectorProps) {
   const [form, setForm] = useState(() => formOf(node));
   useEffect(() => setForm(formOf(node)), [node]);
   const dirty = JSON.stringify(form) !== JSON.stringify(formOf(node));
@@ -67,6 +70,19 @@ export function NodeInspector({ node, graph, mutate, onSelectNode, onDeleted }: 
 
   return (
     <div className="inspector">
+      <div className="row inspector-head">
+        <strong className="grow">Node details</strong>
+        {onCenterNode && (
+          <button className="btn ghost small" type="button" onClick={() => onCenterNode(node.id)} title="Center on canvas">
+            ◎ Center
+          </button>
+        )}
+        {onExploreNext && node.proposalId === null && (
+          <button className="btn small" type="button" onClick={() => onExploreNext(node.id)} title="Propose next-layer nodes">
+            ✦ Explore
+          </button>
+        )}
+      </div>
       <form onSubmit={save} onKeyDown={saveOnCmdEnter} className="stack">
         <div className="row">
           <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as NodeType })} aria-label="Node type">
@@ -104,13 +120,23 @@ export function NodeInspector({ node, graph, mutate, onSelectNode, onDeleted }: 
       </form>
 
       <FrontierSection node={node} mutate={mutate} />
+      <SpatialSection node={node} mutate={mutate} />
       <AddChild node={node} mutate={mutate} onCreated={onSelectNode} />
-      <Connections node={node} graph={graph} onSelectNode={onSelectNode} />
+      <Connections node={node} graph={graph} mutate={mutate} onSelectNode={onSelectNode} />
       <ProvenanceSection node={node} />
       <MergeInto node={node} graph={graph} mutate={mutate} onMerged={onSelectNode} />
       <Revisions node={node} />
 
-      <button className="btn danger ghost" onClick={remove}>Delete node</button>
+      <div className="row">
+        {node.proposalId !== null && onAcceptNode ? (
+          <>
+            <button className="btn primary" type="button" onClick={() => onAcceptNode(node.id)}>Accept node</button>
+            <button className="btn danger ghost" type="button" onClick={remove}>Reject suggestion</button>
+          </>
+        ) : (
+          <button className="btn danger ghost" type="button" onClick={remove}>Delete node</button>
+        )}
+      </div>
     </div>
   );
 }
@@ -238,27 +264,113 @@ function AddChild({ node, mutate, onCreated }: { node: ExplorationNode; mutate: 
   );
 }
 
-function Connections({ node, graph, onSelectNode }: { node: ExplorationNode; graph: Graph; onSelectNode: (id: string) => void }) {
+function SpatialSection({ node, mutate }: { node: ExplorationNode; mutate: Mutate }) {
+  const coords = node.x != null && node.y != null ? `X ${Math.round(node.x)} · Y ${Math.round(node.y)}` : "Auto layout";
+  return (
+    <section className="section">
+      <div className="section-head">
+        <h3>Position</h3>
+        <button
+          className={`btn small${node.pinned ? " primary" : " ghost"}`}
+          type="button"
+          onClick={() => void mutate(() => api.updateNode(node.id, { pinned: !node.pinned }))}
+        >
+          {node.pinned ? "⌖ Locked" : "⌖ Lock position"}
+        </button>
+      </div>
+      <p className="muted small" style={{ margin: "4px 0 0" }}>{coords}</p>
+    </section>
+  );
+}
+
+function Connections({
+  node,
+  graph,
+  mutate,
+  onSelectNode,
+}: {
+  node: ExplorationNode;
+  graph: Graph;
+  mutate: Mutate;
+  onSelectNode: (id: string) => void;
+}) {
+  const [targetId, setTargetId] = useState("");
+  const [edgeType, setEdgeType] = useState<EdgeType>("led_to");
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const incoming = graph.edges.filter((e) => e.targetId === node.id);
   const outgoing = graph.edges.filter((e) => e.sourceId === node.id);
-  if (incoming.length + outgoing.length === 0) return null;
+  const candidates = graph.nodes.filter((n) => n.id !== node.id);
+
   const item = (e: ExplorationEdge, otherId: string, arrow: string) => {
     const other = byId.get(otherId);
     return (
-      <li key={e.id}>
-        <span className="muted">{arrow} {EDGE_TYPE_LABEL[e.type]}{authorshipMark(e.authorship) && ` ${authorshipMark(e.authorship)}`}</span>{" "}
-        {other ? <button className="link" onClick={() => onSelectNode(other.id)}>{other.title}</button> : <span className="muted">(outside this view)</span>}
+      <li key={e.id} className="connection-row">
+        <span className="muted small">{arrow}</span>
+        <select
+          className="edge-inline-select"
+          value={e.type}
+          aria-label="Relation type"
+          onChange={(ev) => void mutate(() => api.updateEdge(e.id, ev.target.value as EdgeType))}
+        >
+          {EDGE_TYPES.map((t) => (
+            <option key={t} value={t}>{EDGE_TYPE_LABEL[t]}</option>
+          ))}
+        </select>
+        {other ? (
+          <button className="link grow truncate" type="button" onClick={() => onSelectNode(other.id)} title={other.title}>
+            {other.title}
+          </button>
+        ) : (
+          <span className="muted grow">(outside this view)</span>
+        )}
+        <button
+          className="btn ghost small"
+          type="button"
+          title="Remove relation"
+          onClick={() => void mutate(() => api.deleteEdge(e.id))}
+        >
+          ×
+        </button>
       </li>
     );
   };
+
   return (
     <section className="section">
-      <h3>Connections</h3>
-      <ul className="plain">
-        {incoming.map((e) => item(e, e.sourceId, "←"))}
-        {outgoing.map((e) => item(e, e.targetId, "→"))}
-      </ul>
+      <h3>Connections · {incoming.length + outgoing.length}</h3>
+      {incoming.length + outgoing.length > 0 && (
+        <ul className="plain connection-list">
+          {incoming.map((e) => item(e, e.sourceId, "←"))}
+          {outgoing.map((e) => item(e, e.targetId, "→"))}
+        </ul>
+      )}
+      {candidates.length > 0 && (
+        <form
+          className="stack"
+          style={{ marginTop: 8 }}
+          onSubmit={async (ev) => {
+            ev.preventDefault();
+            if (!targetId) return;
+            await mutate(() => api.createEdge({ sourceId: node.id, targetId, type: edgeType }));
+            setTargetId("");
+          }}
+        >
+          <div className="row">
+            <select value={edgeType} onChange={(ev) => setEdgeType(ev.target.value as EdgeType)} aria-label="Link type">
+              {EDGE_TYPES.map((t) => (
+                <option key={t} value={t}>{EDGE_TYPE_LABEL[t]}</option>
+              ))}
+            </select>
+            <select value={targetId} onChange={(ev) => setTargetId(ev.target.value)} aria-label="Target node">
+              <option value="">Link to node…</option>
+              {candidates.map((n) => (
+                <option key={n.id} value={n.id}>{n.title}</option>
+              ))}
+            </select>
+          </div>
+          <button className="btn small" type="submit" disabled={!targetId}>+ Add relation</button>
+        </form>
+      )}
     </section>
   );
 }

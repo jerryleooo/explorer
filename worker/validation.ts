@@ -36,6 +36,12 @@ function nullableStr(value: unknown, field: string): string | null {
   return value === null ? null : str(value, field).trim() || null;
 }
 
+function nullableNum(value: unknown, field: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new ValidationError(`${field} must be a finite number`);
+  return value;
+}
+
 export function parseNewNode(body: unknown): NewNode {
   const o = object(body);
   const parent = o.parent === undefined ? undefined : object(o.parent);
@@ -44,6 +50,9 @@ export function parseNewNode(body: unknown): NewNode {
     title: str(o.title, "title"),
     body: o.body === undefined ? undefined : str(o.body, "body"),
     domain: o.domain === undefined ? undefined : str(o.domain, "domain"),
+    x: o.x === undefined ? undefined : nullableNum(o.x, "x"),
+    y: o.y === undefined ? undefined : nullableNum(o.y, "y"),
+    pinned: o.pinned === undefined ? undefined : o.pinned === true,
     parent: parent && { nodeId: str(parent.nodeId, "parent.nodeId"), edgeType: oneOf(EDGE_TYPES, parent.edgeType, "parent.edgeType") },
   };
 }
@@ -64,6 +73,12 @@ export function parseNodePatch(body: unknown): NodePatch {
   if (o.sourceRefs !== undefined) {
     if (!Array.isArray(o.sourceRefs)) throw new ValidationError("sourceRefs must be an array");
     patch.sourceRefs = o.sourceRefs.map((r) => str(r, "sourceRefs[]"));
+  }
+  if (o.x !== undefined) patch.x = nullableNum(o.x, "x");
+  if (o.y !== undefined) patch.y = nullableNum(o.y, "y");
+  if (o.pinned !== undefined) {
+    if (typeof o.pinned !== "boolean") throw new ValidationError("pinned must be a boolean");
+    patch.pinned = o.pinned;
   }
   return patch;
 }
@@ -120,4 +135,18 @@ export function parseMergeDecision(body: unknown): { proposedNodeId: string; exi
 
 export function parseMergeInto(body: unknown): string {
   return str(object(body).intoId, "intoId");
+}
+
+export function parseAcceptProposal(body: unknown): string[] | undefined {
+  if (body === undefined || body === null) return undefined;
+  const o = object(body);
+  if (o.nodeIds === undefined) return undefined;
+  if (!Array.isArray(o.nodeIds)) throw new ValidationError("nodeIds must be an array");
+  return o.nodeIds.map((id) => str(id, "nodeIds[]"));
+}
+
+export function parseExplore(body: unknown): { useAi: boolean } {
+  if (body === undefined || body === null) return { useAi: false };
+  const o = object(body);
+  return { useAi: o.useAi === true };
 }

@@ -25,6 +25,8 @@ export interface NewProposal {
   extraction: Extraction;
   /** Merge candidates keyed by extracted node key (resolved to ids on insert). */
   mergeCandidates: Array<Omit<MergeCandidate, "proposedNodeId"> & { key: string }>;
+  /** Optional existing node to attach root extracted nodes under (e.g. "Explore next layer"). */
+  attachTo?: { nodeId: string; edgeType: EdgeType };
 }
 
 /**
@@ -53,11 +55,12 @@ export interface GraphRepository {
   createProposal(input: NewProposal): Promise<Proposal>;
   getProposal(id: string): Promise<ProposalView>;
   listProposals(): Promise<Proposal[]>;
-  /** Merges the draft into the long-term graph; approval is recorded, authorship is untouched. */
-  acceptProposal(id: string): Promise<Proposal>;
+  /** Merges all (or selected) draft nodes into the long-term graph; approval is recorded, authorship is untouched. */
+  acceptProposal(id: string, nodeIds?: string[]): Promise<Proposal>;
   discardProposal(id: string): Promise<Proposal>;
   resolveMergeCandidate(proposalId: string, proposedNodeId: string, existingNodeId: string, decision: "merge" | "keep"): Promise<ProposalView>;
   getSource(id: string): Promise<Source>;
+  listSources(): Promise<Source[]>;
 
   getActiveSession(): Promise<ExplorationSession | null>;
   startSession(title: string): Promise<ExplorationSession>;

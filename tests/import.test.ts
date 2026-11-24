@@ -3,6 +3,7 @@ import type { Extraction } from "../src/domain/types";
 import type { GraphExtractor } from "../src/import/extraction";
 import { sanitizeExtraction } from "../src/import/extraction";
 import { HeuristicExtractor } from "../src/import/heuristicExtractor";
+import { exploreNextLayer } from "../src/import/exploreNext";
 import { importSource } from "../src/import/importSource";
 import { similarity } from "../src/import/similarity";
 import { SqlGraphRepository } from "../src/storage/sqlGraphRepository";
@@ -128,6 +129,45 @@ describe("AI proposals", () => {
     expect((await repo.getProposal(proposal.id)).graph.nodes).toHaveLength(0);
     expect((await repo.getSource(proposal.sourceId)).name).toBe("chat.txt");
     await expect(repo.acceptProposal(proposal.id)).rejects.toThrow(/already discarded/);
+  });
+
+  it("supports selectively accepting a subset of draft nodes and keeps remaining drafts open", async () => {
+    const proposal = await importSource(repo, new FakeAiExtractor(), { kind: "text", name: "chat.txt", content: NOTES });
+    const { graph } = await repo.getProposal(proposal.id);
+    const finding = graph.nodes.find((n) => n.type === "finding")!;
+    const hypothesis = graph.nodes.find((n) => n.type === "hypothesis")!;
+
+    const partial = await repo.acceptProposal(proposal.id, [finding.id]);
+    expect(partial.status).toBe("open");
+    expect((await repo.getGraph()).nodes.map((n) => n.id)).toEqual([finding.id]);
+    expect((await repo.getGraph()).edges).toHaveLength(0); // hypothesis still draft
+
+    const final = await repo.acceptProposal(proposal.id, [hypothesis.id]);
+    expect(final.status).toBe("accepted");
+    expect((await repo.getGraph()).nodes).toHaveLength(2);
+    expect((await repo.getGraph()).edges).toHaveLength(1);
+    expect((await repo.listSources()).map((s) => s.name)).toEqual(["chat.txt"]);
+  });
+});
+
+describe("exploreNextLayer", () => {
+  it("creates an open draft proposal attached to an existing node without moving it", async () => {
+    const { node: root } = await repo.createNode({
+      type: "question",
+      title: "AI 增长的真正瓶颈在哪里？",
+      domain: "AI 产业",
+      x: 200,
+      y: 120,
+    });
+    const proposal = await exploreNextLayer(repo, root.id);
+    const view = await repo.getProposal(proposal.id);
+
+    const draftNodes = view.graph.nodes.filter((n) => n.proposalId === proposal.id);
+    expect(draftNodes).toHaveLength(3);
+    expect(draftNodes.every((n) => n.authorship === "ai" && !n.approvedByHuman)).toBe(true);
+    expect(draftNodes.every((n) => n.x != null && n.y != null)).toBe(true);
+    expect(view.graph.edges.every((e) => e.sourceId === root.id)).toBe(true);
+    expect(await repo.getNode(root.id)).toMatchObject({ x: 200, y: 120 });
   });
 });
 
