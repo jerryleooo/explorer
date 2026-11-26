@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { NotFoundError, ValidationError } from "../src/domain/repository";
+import { isSchemaMigrationError } from "../src/storage/sql";
 import { SqlGraphRepository } from "../src/storage/sqlGraphRepository";
 import { NodeSqliteDatabase } from "./nodeSqlite";
 
@@ -149,5 +150,24 @@ describe("spatial layout and pin locks", () => {
     expect(await repo.getNode(child.id)).toMatchObject({ x: 440, y: 200, pinned: true });
     // Position-only update does not create a redundant content revision.
     expect(await repo.listRevisions(child.id)).toHaveLength(1);
+  });
+});
+
+describe("isSchemaMigrationError", () => {
+  it("detects missing column/table errors directly or via cause", () => {
+    expect(isSchemaMigrationError(new Error("D1_ERROR: table nodes has no column named x: SQLITE_ERROR"))).toBe(true);
+    expect(isSchemaMigrationError(new Error("D1_ERROR: no such column: x: SQLITE_ERROR"))).toBe(true);
+    expect(isSchemaMigrationError(new Error("D1_ERROR: no such table: nodes: SQLITE_ERROR"))).toBe(true);
+    expect(
+      isSchemaMigrationError(
+        new Error("D1_ERROR", { cause: new Error("table nodes has no column named x: SQLITE_ERROR") }),
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores unrelated database or runtime errors", () => {
+    expect(isSchemaMigrationError(new Error("UNIQUE constraint failed: nodes.id"))).toBe(false);
+    expect(isSchemaMigrationError(new Error("network timeout"))).toBe(false);
+    expect(isSchemaMigrationError(null)).toBe(false);
   });
 });
