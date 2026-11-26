@@ -6,6 +6,7 @@ import type { GraphExtractor } from "../src/import/extraction";
 import { HeuristicExtractor } from "../src/import/heuristicExtractor";
 import { importSource } from "../src/import/importSource";
 import { D1SqlDatabase } from "../src/storage/d1";
+import { isSchemaMigrationError } from "../src/storage/sql";
 import { SqlGraphRepository } from "../src/storage/sqlGraphRepository";
 import {
   parseAcceptProposal,
@@ -42,6 +43,17 @@ app.onError((err, c) => {
   if (err instanceof ValidationError) return c.json({ error: err.message }, 400);
   if (err instanceof AgentaabError) return c.json({ error: err.message, code: err.code }, err.status >= 500 ? 502 : 422);
   if (err instanceof NotFoundError) return c.json({ error: err.message }, 404);
+  if (isSchemaMigrationError(err)) {
+    console.error(err);
+    const detail = err instanceof Error ? err.message : "missing table or column";
+    return c.json(
+      {
+        error: `Database schema is out of date (${detail}). Run \`pnpm db:migrate:local\` (or \`pnpm db:migrate:remote\` for production).`,
+        code: "SCHEMA_OUT_OF_DATE",
+      },
+      500,
+    );
+  }
   console.error(err);
   return c.json({ error: err instanceof Error ? err.message : "internal error" }, 500);
 });
